@@ -36,6 +36,56 @@ export const providerCloudflareWorkersAI = defineProvider<CloudflareWorkersAICon
   createProvider(config) {
     return createWorkersAI(config.apiKey, config.accountId)
   },
+  // The provider has no model list request, so the settings page found no model.
+  // Return the common Workers AI chat models. The model picker also accepts a custom model ID.
+  extraMethods: {
+    async listModels() {
+      return [
+        {
+          id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+          name: 'Llama 3.3 70B Instruct (fast)',
+          provider: 'cloudflare-workers-ai',
+          description: 'Large general chat model from Meta. Stella uses it by default.',
+        },
+        {
+          id: '@cf/meta/llama-3.1-8b-instruct',
+          name: 'Llama 3.1 8B Instruct',
+          provider: 'cloudflare-workers-ai',
+          description: 'Small and quick chat model from Meta.',
+        },
+        {
+          id: '@cf/meta/llama-4-scout-17b-16e-instruct',
+          name: 'Llama 4 Scout 17B',
+          provider: 'cloudflare-workers-ai',
+          description: 'Mixture-of-experts chat model from Meta.',
+        },
+        {
+          id: '@cf/mistralai/mistral-small-3.1-24b-instruct',
+          name: 'Mistral Small 3.1 24B',
+          provider: 'cloudflare-workers-ai',
+          description: 'Mid-size chat model from Mistral.',
+        },
+        {
+          id: '@cf/google/gemma-3-12b-it',
+          name: 'Gemma 3 12B',
+          provider: 'cloudflare-workers-ai',
+          description: 'Mid-size chat model from Google.',
+        },
+        {
+          id: '@cf/openai/gpt-oss-120b',
+          name: 'GPT-OSS 120B',
+          provider: 'cloudflare-workers-ai',
+          description: 'Large open-weight reasoning model from OpenAI.',
+        },
+        {
+          id: '@cf/openai/gpt-oss-20b',
+          name: 'GPT-OSS 20B',
+          provider: 'cloudflare-workers-ai',
+          description: 'Small open-weight reasoning model from OpenAI.',
+        },
+      ]
+    },
+  },
   validationRequiredWhen: (config) => {
     return !!config.apiKey && !!config.accountId
   },
