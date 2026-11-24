@@ -24,8 +24,10 @@ import { isStepPending, sharedOnboardingSteps, useOnboardingStore } from '../../
 import { useProviderConfigStore } from '../../../../stores/providers/config'
 import { useProviderStore } from '../../../../stores/providers/provider'
 
-const CLOUDFLARE_PROVIDER_ID = 'cloudflare-workers-ai'
-const CLOUDFLARE_DEFAULT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+// Stella reaches Cloudflare Workers AI through her own proxy (see `stella-proxy`).
+// The proxy speaks the OpenAI chat format. The base URL is the proxy address and the API key is the proxy passphrase.
+const STELLA_PROVIDER_ID = 'openai-compatible'
+const STELLA_DEFAULT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
 interface Emits {
   (e: 'configured'): void
@@ -53,8 +55,8 @@ const {
 } = storeToRefs(consciousnessStore)
 
 // Selected provider and form data
-// Stella always uses Cloudflare Workers AI, so this flow has no provider selection step.
-const selectedProviderId = ref(CLOUDFLARE_PROVIDER_ID)
+// Stella always uses her own proxy, so this flow has no provider selection step.
+const selectedProviderId = ref(STELLA_PROVIDER_ID)
 
 // Computed selected provider
 const selectedProvider = computed(() => {
@@ -113,7 +115,7 @@ async function saveProviderConfiguration(data: ProviderConfigData) {
 
   // The model step starts with the model that Stella uses. The user can still pick another one.
   if (!consciousnessStore.activeModel)
-    consciousnessStore.activeModel = CLOUDFLARE_DEFAULT_MODEL
+    consciousnessStore.activeModel = STELLA_DEFAULT_MODEL
 }
 
 /** A shared step takes its version from the store catalog, so the store and the flow agree on it. */
