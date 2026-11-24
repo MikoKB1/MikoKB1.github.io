@@ -1,0 +1,32 @@
+services:
+  # The site. GitHub Actions builds it and pushes the files to the `site` branch.
+  - type: web
+    runtime: static
+    name: stella-site
+    plan: free
+    branch: site
+    buildCommand: echo "GitHub Actions builds the site."
+    staticPublishPath: .
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # The proxy. It keeps the Cloudflare token on the server and lets the browser call Cloudflare.
+  - type: web
+    runtime: node
+    name: stella-proxy
+    plan: free
+    rootDir: stella-proxy
+    buildCommand: echo "No dependencies."
+    startCommand: node server.mjs
+    healthCheckPath: /healthz
+    envVars:
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: PROXY_PASSPHRASE
+        sync: false
+      - key: ALLOWED_ORIGIN
+        sync: false

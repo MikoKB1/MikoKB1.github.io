@@ -1,0 +1,45 @@
+name: Publish site
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+concurrency:
+  group: publish-site
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build stage-web and push to the site branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@^26.12.1
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:packages
+      - name: Build stage-web
+        run: pnpm -F @proj-airi/stage-web run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      # Render serves the `site` branch as a static site. Each build replaces the whole branch.
+      - name: Push the build to the site branch
+        working-directory: apps/stage-web/dist
+        run: |
+          git init --initial-branch=site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit --message "build: stage-web from ${GITHUB_SHA}"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
