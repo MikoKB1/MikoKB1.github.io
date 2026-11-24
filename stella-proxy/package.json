@@ -1,0 +1,13 @@
+{
+  "name": "stella-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Proxy that lets a browser use Cloudflare Workers AI without exposing the API token.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
