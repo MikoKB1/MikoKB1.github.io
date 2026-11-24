@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { ProviderMode } from '../../../../composables/use-analytics'
-import type { ProviderMetadata } from '../../../../libs/providers/metadata'
 import type {
   OnboardingStep,
   OnboardingStepGuard,
@@ -17,7 +16,6 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import StepModelSelection from './step-model-selection.vue'
 import StepPermissions from './step-permissions.vue'
 import StepProviderConfiguration from './step-provider-configuration.vue'
-import StepProviderSelection from './step-provider-selection.vue'
 import StepWelcome from './step-welcome.vue'
 
 import { useAnalytics } from '../../../../composables/use-analytics'
@@ -25,6 +23,9 @@ import { useConsciousnessStore } from '../../../../stores/modules/consciousness'
 import { isStepPending, sharedOnboardingSteps, useOnboardingStore } from '../../../../stores/onboarding'
 import { useProviderConfigStore } from '../../../../stores/providers/config'
 import { useProviderStore } from '../../../../stores/providers/provider'
+
+const CLOUDFLARE_PROVIDER_ID = 'cloudflare-workers-ai'
+const CLOUDFLARE_DEFAULT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
 interface Emits {
   (e: 'configured'): void
@@ -51,16 +52,9 @@ const {
   activeProvider,
 } = storeToRefs(consciousnessStore)
 
-// Popular providers for first-time setup
-const popularProviders = computed(() => {
-  const popular = ['openai', 'azure-openai', 'anthropic', 'amazon-bedrock', 'google-generative-ai', 'groq', 'nvidia', 'openrouter-ai', 'ollama', 'deepseek', 'player2', 'openai-compatible']
-  return allChatProvidersMetadata.value
-    .filter(provider => popular.includes(provider.id))
-    .sort((a, b) => popular.indexOf(a.id) - popular.indexOf(b.id))
-})
-
 // Selected provider and form data
-const selectedProviderId = ref('')
+// Stella always uses Cloudflare Workers AI, so this flow has no provider selection step.
+const selectedProviderId = ref(CLOUDFLARE_PROVIDER_ID)
 
 // Computed selected provider
 const selectedProvider = computed(() => {
@@ -72,11 +66,6 @@ const selectedProviderType = computed<ProviderMode>(() => {
     return 'unknown'
   return selectedProviderId.value.startsWith('official-provider') ? 'official' : 'custom'
 })
-
-// Reset validation state when provider changes
-function selectProvider(provider: ProviderMetadata) {
-  selectedProviderId.value = provider.id
-}
 
 const requestPreviousStep: OnboardingStepPrevHandler = () => {
   return navigatePrevious()
@@ -121,6 +110,10 @@ async function saveProviderConfiguration(data: ProviderConfigData) {
   catch (err) {
     console.error('[onboarding] Failed to load models for provider:', err)
   }
+
+  // The model step starts with the model that Stella uses. The user can still pick another one.
+  if (!consciousnessStore.activeModel)
+    consciousnessStore.activeModel = CLOUDFLARE_DEFAULT_MODEL
 }
 
 /** A shared step takes its version from the store catalog, so the store and the flow agree on it. */
@@ -136,16 +129,6 @@ const allSteps = computed<OnboardingStep[]>(() => {
       component: StepWelcome,
       props: () => ({
         customProviderSetupEnabled: !isCustomProvidersDisabled(),
-      }),
-    },
-    {
-      id: 'provider-selection',
-      version: sharedVersionOf('provider-selection'),
-      component: StepProviderSelection,
-      props: () => ({
-        selectedProviderId: selectedProviderId.value,
-        popularProviders: popularProviders.value,
-        onSelectProvider: selectProvider,
       }),
     },
     {
@@ -208,8 +191,12 @@ const currentStepProps = computed(() => currentStep.value?.props?.() ?? {})
 async function handleSave() {
   // Steps are recorded at the finish, not one by one. The provider steps depend on each
   // other, so a flow that closes in the middle starts again from its first pending step.
+  // The provider selection step has no screen, but the store still lists it. Record it, or setup opens again at the next start.
   await onboardingStore.recordSteps(
-    flowSteps.value.filter(flowStep => !postponedStepIds.has(flowStep.id)).map(flowStep => ({ id: flowStep.id, version: flowStep.version ?? 1 })),
+    [
+      ...flowSteps.value.filter(flowStep => !postponedStepIds.has(flowStep.id)).map(flowStep => ({ id: flowStep.id, version: flowStep.version ?? 1 })),
+      { id: 'provider-selection', version: sharedVersionOf('provider-selection') },
+    ],
     'done',
   )
   trackOnboardingStepCompleted(currentStep.value?.id ?? 'unknown')
