@@ -18,7 +18,7 @@ services:
     name: stella-proxy
     plan: free
     rootDir: stella-proxy
-    buildCommand: echo "No dependencies."
+    buildCommand: npm install
     startCommand: node server.mjs
     healthCheckPath: /healthz
     envVars:
