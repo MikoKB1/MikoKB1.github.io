@@ -7,6 +7,7 @@ A small proxy for a browser app. It gives the app Cloudflare Workers AI for chat
 Cloudflare blocks direct calls to its AI API from a web page. This proxy runs on a server instead.
 It holds the Cloudflare token, checks a passphrase, and passes chat requests to Cloudflare.
 A browser also cannot open the Edge voice service, so the proxy makes the speech audio and returns it.
+The proxy runs the Python `edge-tts` command when it is installed. Otherwise it uses the `edge-tts-universal` package.
 
 ## Use it
 
@@ -19,6 +20,8 @@ Run `npm install` once, then `node server.mjs` with these environment variables:
 | `PROXY_PASSPHRASE` | The passphrase that the app sends as its API key. |
 | `ALLOWED_ORIGIN` | The address of the site that calls the proxy. The default is any site. |
 | `EDGE_VOICE` | The Edge voice. The default is `en-US-AnaNeural`. |
+| `EDGE_TTS_COMMAND` | The Python `edge-tts` command. The default is `edge-tts`. Give the full path if it is not on the PATH. |
+| `VOICE_TIMEOUT_MS` | How long one voice try can take. The default is 15000. |
 | `PORT` | The port. The default is 8787. |
 
 In the app, use the OpenAI Compatible provider. Set the base URL to the proxy address with `/v1` at the end.

@@ -1,5 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
@@ -8,6 +12,8 @@ const passphrase = process.env.PROXY_PASSPHRASE
 const allowedOrigin = process.env.ALLOWED_ORIGIN || '*'
 const port = Number(process.env.PORT) || 8787
 const defaultVoice = process.env.EDGE_VOICE || 'en-US-AnaNeural'
+// The Python edge-tts command is tried first. Set EDGE_TTS_COMMAND to its full path if it is not on the PATH.
+const edgeTtsCommand = process.env.EDGE_TTS_COMMAND || 'edge-tts'
 
 if (!accountId || !apiToken || !passphrase) {
   console.error('Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN and PROXY_PASSPHRASE.')
@@ -32,7 +38,7 @@ const models = [
 const edgeVoicePattern = /^[a-z]{2,3}-[A-Z]{2}-\w+Neural$/
 const maxSpeechChars = 5000
 const speechAttempts = 3
-const speechTimeoutMs = 8000
+const speechTimeoutMs = Number(process.env.VOICE_TIMEOUT_MS) || 15000
 
 function sha256(value) {
   return createHash('sha256').update(value).digest()
@@ -137,6 +143,35 @@ async function synthesizeOnce(EdgeTTS, text, voice, rate) {
   }
 }
 
+// Run the Python edge-tts command. Returns undefined when the command is not installed.
+async function synthesizeWithCommand(text, voice, rate) {
+  const dir = await mkdtemp(join(tmpdir(), 'stella-voice-'))
+  const textFile = join(dir, 'input.txt')
+  const audioFile = join(dir, 'output.mp3')
+  try {
+    await writeFile(textFile, text, 'utf8')
+    // The = form keeps a negative rate such as -20% from reading as an option.
+    const args = ['--voice', voice, `--rate=${rate}`, '--file', textFile, '--write-media', audioFile]
+    await new Promise((resolve, reject) => {
+      execFile(edgeTtsCommand, args, { timeout: speechTimeoutMs }, (error, _stdout, stderr) => {
+        if (error)
+          reject(Object.assign(new Error(error.code === 'ENOENT' ? 'not installed' : (stderr.trim().split('\n').pop() || error.message)), { code: error.code }))
+        else
+          resolve()
+      })
+    })
+    return await readFile(audioFile)
+  }
+  catch (error) {
+    if (error.code === 'ENOENT')
+      return undefined
+    throw error
+  }
+  finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 // Same request shape as the OpenAI speech API. Any voice that is not an Edge voice name uses the default voice.
 async function handleSpeech(request, response) {
   let payload
@@ -154,18 +189,26 @@ async function handleSpeech(request, response) {
   const voice = typeof payload.voice === 'string' && edgeVoicePattern.test(payload.voice) ? payload.voice : defaultVoice
   const rate = speedToRate(payload.speed)
 
+  // Try the Python command first. If it is not installed, use the Node package.
   let EdgeTTS
-  try {
-    ({ EdgeTTS } = await import('edge-tts-universal'))
-  }
-  catch {
-    return sendError(response, 500, 'The voice package is missing. Run npm install in the stella-proxy folder.')
-  }
+  let commandInstalled = true
 
   // Microsoft's voice service drops a request now and then. Try again a few times, as old Stella did.
   for (let attempt = 1; attempt <= speechAttempts; attempt++) {
     try {
-      const audio = await synthesizeOnce(EdgeTTS, text, voice, rate)
+      let audio = commandInstalled ? await synthesizeWithCommand(text, voice, rate) : undefined
+      if (audio === undefined) {
+        commandInstalled = false
+        if (!EdgeTTS) {
+          try {
+            ({ EdgeTTS } = await import('edge-tts-universal'))
+          }
+          catch {
+            return sendError(response, 500, 'No voice found. Install the Python edge-tts command, or run npm install in the stella-proxy folder.')
+          }
+        }
+        audio = await synthesizeOnce(EdgeTTS, text, voice, rate)
+      }
       if (audio.length > 0) {
         response.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': audio.length, 'Cache-Control': 'no-store' })
         return response.end(audio)
