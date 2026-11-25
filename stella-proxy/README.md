@@ -1,6 +1,6 @@
 # stella-proxy
 
-A small proxy for a browser app. It gives the app Cloudflare Workers AI for chat and Microsoft Edge voices for speech.
+A small proxy for a browser app. It gives the app Cloudflare Workers AI for chat and speech to text, and Microsoft Edge voices for speech.
 
 ## What it does
 
@@ -8,6 +8,7 @@ Cloudflare blocks direct calls to its AI API from a web page. This proxy runs on
 It holds the Cloudflare token, checks a passphrase, and passes chat requests to Cloudflare.
 A browser also cannot open the Edge voice service, so the proxy makes the speech audio and returns it.
 The proxy runs the Python `edge-tts` command when it is installed. Otherwise it uses the `edge-tts-universal` package.
+For speech to text, the proxy sends the recorded audio to Cloudflare Whisper and returns the text.
 
 ## Use it
 
@@ -22,6 +23,7 @@ Run `npm install` once, then `node server.mjs` with these environment variables:
 | `EDGE_VOICE` | The Edge voice. The default is `en-US-AnaNeural`. |
 | `EDGE_TTS_COMMAND` | The Python `edge-tts` command. The default is `edge-tts`. Give the full path if it is not on the PATH. |
 | `VOICE_TIMEOUT_MS` | How long one voice try can take. The default is 15000. |
+| `WHISPER_MODEL` | The Whisper model for speech to text. The default is `@cf/openai/whisper-large-v3-turbo`. |
 | `PORT` | The port. The default is 8787. |
 
 In the app, use the OpenAI Compatible provider. Set the base URL to the proxy address with `/v1` at the end.
@@ -30,12 +32,16 @@ Set the API key to the passphrase. Use a model ID that starts with `@cf/`.
 For speech, use the OpenAI Compatible speech provider. Set the base URL to the proxy address with `/v1/` at the end.
 Set the API key to the passphrase and the model to `edge-tts`. A voice name that is not an Edge voice uses `EDGE_VOICE`.
 
+For speech to text, use the OpenAI Compatible transcription provider. Set the base URL to the proxy address with `/v1/` at the end.
+Set the API key to the passphrase and the model to `@cf/openai/whisper-large-v3-turbo`.
+
 ## Routes
 
 - `GET /healthz` returns `{"ok":true}` and needs no passphrase.
-- `GET /v1/models` lists the Workers AI chat models.
+- `GET /v1/models` lists the Workers AI models.
 - `POST /v1/chat/completions` sends a chat request to Cloudflare. It supports streaming.
 - `POST /v1/audio/speech` returns an MP3 for the `input` text. It reads `voice` and `speed`.
+- `POST /v1/audio/transcriptions` takes a multipart form with a `file` field. It reads `model`, `language`, and `response_format`. It returns `{"text":"..."}`. The audio limit is 25 MB.
 
 ## When not to use it
 

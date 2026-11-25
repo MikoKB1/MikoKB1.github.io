@@ -22,6 +22,9 @@ if (!accountId || !apiToken || !passphrase) {
 
 const upstreamUrl = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1/chat/completions`
 const maxBodyBytes = 1024 * 1024
+const maxAudioBytes = 25 * 1024 * 1024
+const defaultWhisperModel = process.env.WHISPER_MODEL || '@cf/openai/whisper-large-v3-turbo'
+const whisperUrl = model => `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${model}`
 
 const models = [
   ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'meta'],
@@ -31,6 +34,7 @@ const models = [
   ['@cf/google/gemma-3-12b-it', 'google'],
   ['@cf/openai/gpt-oss-120b', 'openai'],
   ['@cf/openai/gpt-oss-20b', 'openai'],
+  ['@cf/openai/whisper-large-v3-turbo', 'openai'],
   // The speech model. AIRI lists speech models by looking for "tts" in the model ID.
   ['edge-tts', 'microsoft'],
 ].map(([id, owned_by]) => ({ id, object: 'model', owned_by }))
@@ -67,16 +71,20 @@ function sendError(response, status, message) {
   sendJson(response, status, { error: { message, type: 'stella_proxy_error' } })
 }
 
-async function readBody(request) {
+async function readBuffer(request, limit = maxBodyBytes) {
   const chunks = []
   let size = 0
   for await (const chunk of request) {
     size += chunk.length
-    if (size > maxBodyBytes)
+    if (size > limit)
       throw new Error('Request body is too large.')
     chunks.push(chunk)
   }
-  return Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks)
+}
+
+async function readBody(request) {
+  return (await readBuffer(request)).toString('utf8')
 }
 
 async function handleChat(request, response) {
@@ -223,6 +231,56 @@ async function handleSpeech(request, response) {
   return sendError(response, 502, 'The voice service did not answer.')
 }
 
+// Same request shape as the OpenAI transcription API: a multipart form with a `file` field.
+async function handleTranscription(request, response) {
+  let form
+  try {
+    const body = await readBuffer(request, maxAudioBytes)
+    form = await new Response(body, { headers: { 'content-type': request.headers['content-type'] ?? '' } }).formData()
+  }
+  catch {
+    return sendError(response, 400, 'The request must be a multipart form with an audio file under 25 MB.')
+  }
+
+  const file = form.get('file')
+  if (!file || typeof file === 'string' || file.size === 0)
+    return sendError(response, 400, 'The form has no audio file.')
+
+  const requestedModel = form.get('model')
+  const model = typeof requestedModel === 'string' && requestedModel.startsWith('@cf/openai/whisper') ? requestedModel : defaultWhisperModel
+  const language = form.get('language')
+  const input = { audio: Buffer.from(await file.arrayBuffer()).toString('base64') }
+  if (typeof language === 'string' && language)
+    input.language = language
+
+  let upstream
+  try {
+    upstream = await fetch(whisperUrl(model), {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+  }
+  catch {
+    return sendError(response, 502, 'Cloudflare did not answer.')
+  }
+
+  const result = await upstream.json().catch(() => undefined)
+  const text = result?.result?.text
+  if (!upstream.ok || typeof text !== 'string') {
+    const detail = result?.errors?.[0]?.message ?? `status ${upstream.status}`
+    console.error(`Transcription failed: ${detail}`)
+    return sendError(response, 502, `Cloudflare could not transcribe the audio: ${detail}`)
+  }
+
+  const trimmed = text.trim()
+  if (form.get('response_format') === 'text') {
+    response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
+    return response.end(trimmed)
+  }
+  return sendJson(response, 200, { text: trimmed })
+}
+
 const server = createServer(async (request, response) => {
   setCorsHeaders(response)
   const { pathname } = new URL(request.url ?? '/', 'http://localhost')
@@ -247,6 +305,9 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'POST' && pathname === '/v1/audio/speech')
     return handleSpeech(request, response)
+
+  if (request.method === 'POST' && pathname === '/v1/audio/transcriptions')
+    return handleTranscription(request, response)
 
   return sendError(response, 404, 'Not found.')
 })
