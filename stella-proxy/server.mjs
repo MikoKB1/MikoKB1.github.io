@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
 
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID
 const apiToken = process.env.CLOUDFLARE_API_TOKEN
@@ -87,6 +87,56 @@ async function readBody(request) {
   return (await readBuffer(request)).toString('utf8')
 }
 
+// NOTICE:
+// Workers AI can send a streamed token such as `0` as a JSON number, not a string.
+// The cause is that Cloudflare parses each token as JSON before it sends the chunk.
+// AIRI reads a non-string chunk as an internal signal and fails with "token.flush.settle is not a function".
+// Remove this when Cloudflare always sends `content` as a string.
+function toText(value) {
+  if (value === null || value === undefined || typeof value === 'string')
+    return value
+  return typeof value === 'object' ? JSON.stringify(value) : String(value)
+}
+
+function fixChoiceContent(choices) {
+  if (!Array.isArray(choices))
+    return
+  for (const choice of choices) {
+    for (const part of [choice?.delta, choice?.message]) {
+      if (part && 'content' in part)
+        part.content = toText(part.content)
+    }
+  }
+}
+
+function fixSseLine(line) {
+  if (!line.startsWith('data:') || line.startsWith('data: [DONE]'))
+    return line
+  try {
+    const data = JSON.parse(line.slice(5))
+    fixChoiceContent(data?.choices)
+    return `data: ${JSON.stringify(data)}`
+  }
+  catch {
+    return line
+  }
+}
+
+function createContentFixStream() {
+  let pending = ''
+  return new Transform({
+    transform(chunk, _encoding, done) {
+      pending += chunk.toString('utf8')
+      const lines = pending.split('\n')
+      pending = lines.pop() ?? ''
+      done(null, lines.map(line => `${fixSseLine(line)}\n`).join(''))
+    },
+    flush(done) {
+      done(null, pending ? fixSseLine(pending) : '')
+    },
+  })
+}
+
 async function handleChat(request, response) {
   let payload
   try {
@@ -122,9 +172,14 @@ async function handleChat(request, response) {
   if (!upstream.body)
     return response.end()
 
-  const stream = Readable.fromWeb(upstream.body)
-  stream.on('error', () => response.destroy())
-  response.on('close', () => stream.destroy())
+  const source = Readable.fromWeb(upstream.body)
+  const isEventStream = (upstream.headers.get('content-type') ?? '').includes('text/event-stream')
+  const stream = isEventStream ? source.pipe(createContentFixStream()) : source
+  source.on('error', () => response.destroy())
+  response.on('close', () => {
+    source.destroy()
+    stream.destroy()
+  })
   stream.pipe(response)
 }
 
